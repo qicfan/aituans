@@ -1,5 +1,5 @@
 #!/usr/bin/env python2.7
-#coding: utf-8
+#coding:utf-8
 '''
 Created on 2011-5-13
 
@@ -19,6 +19,7 @@ import pickle
 import hashlib
 import Queue
 import time
+import codecs
 
 
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
@@ -164,11 +165,17 @@ def httpGetUrlContent(url):
     except Exception, e:
         LOGGER[0].error("error for get %s: %s" % (url, e))
         return False
+    page_content = page_content.replace("\n", "")
+    page_content = page_content.replace("\r", "")
     if isinstance(page_content, unicode) == True:
         return page_content
-    if type(page_content).__name__ == "str":
-        # 一个普通字符串，转化为unicode
-        return page_content
+    # 判断网页的编码类型
+    r = re.compile("content=[\"\']text/html;\ *charset=utf-8[\"\']")
+    rs = r.findall(page_content.lower())
+    if len(rs) > 0:
+        return page_content.decode("utf-8", "ignore")
+    else:
+        return page_content.decode("gbk", "ignore")
 
 def findHostFromUrl(url):
     """
@@ -315,8 +322,10 @@ class Spider(threading.Thread):
             self.logger[0].error(u"[%s]URL文件已经存在：%s" % (self.name, url))
             return False
         try:
-            pf = open(page_file, "w")
-            pf.write(u"%s\n%s\n%s\n%s" % (url, self.site_data["class"], self.site_data["name"], page_data.decode("utf-8")))
+            #pf = open(page_file, "w")
+            pf = codecs.open(page_file, "w", "utf-8")
+            #pf.write(u"%s\n%s\n%s\n%s" % (url, self.site_data["class"], self.site_data["name"], page_data))
+            pf.write(url+"\n" + unicode(self.site_data["class"])+"\n" + self.site_data["name"]+"\n" + page_data)
             pf.close()
         except Exception, e:
             self.logger[0].error(u"[%s]URL采集保存文件失败：%s-%s-%s" % (self.name, url, page_file, e))
@@ -379,6 +388,7 @@ def spider_main():
                 for stl in spider_threads_list:
                     stl.join()
                 j = 0
+                spider_threads_list = []
                 if k >= sites_count:
                     k = 0
                     break

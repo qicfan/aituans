@@ -14,10 +14,10 @@ LOGGER = aituans.initLogger("spider")
 class AituansTest(unittest.TestCase):
         
     def testSpider(self):
-        spider = aituans.Spider({"class":"test", "name":"test", "url":"http://www.manzuo.com/beijing/index.htm","domain":"www.manzuo.com"}, os.path.abspath(os.path.dirname(__file__)))
-        spider.start()
-        spider.join()
-        #assert aituans.spider_main() == True
+        #spider = aituans.Spider({"class":"test", "name":"test", "url":"http://www.manzuo.com/beijing/index.htm","domain":"www.manzuo.com"}, os.path.abspath(os.path.dirname(__file__)))
+        #spider.start()
+        #spider.join()
+        assert aituans.spider_main() == True
         pass
     
     def testUpdater(self):
