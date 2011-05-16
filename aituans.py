@@ -6,20 +6,21 @@ Created on 2011-5-13
 @author: zeroq
 '''
 import BeautifulSoup
+import codecs
+import hashlib
 import logging
 import os
-import re
+from parser import *
+import pickle
 import platform
 import pymongo
+import Queue
+import re
 import sys
 import threading
+import time
 import urllib2
 import xml.etree.ElementTree as ET
-import pickle
-import hashlib
-import Queue
-import time
-import codecs
 
 
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
@@ -246,6 +247,20 @@ def encodeByMd5(string):
         return False
     return md5_string
 
+def updateOldUrls(url):
+    """
+    更新抓取并分析过的页面
+    """
+    global ROOT_PATH
+    urls_old = "%s/log/urls.old" % ROOT_PATH
+    old_urls = loadByPickle(urls_old)
+    if not old_urls:
+        old_urls = []
+    if url in old_urls:
+        return
+    old_urls.append(url)
+    saveByPickle(urls_old, old_urls)
+    return
 
 class Spider(threading.Thread):
     """
@@ -291,7 +306,7 @@ class Spider(threading.Thread):
         urls = findUrlFromPageContent(httpGetUrlContent(self.site_data['url']), self.site_data['domain'], False)
         if not urls:
             return False
-        old_urls = loadByPickle("%s/site/old.urls" % self.root_path)
+        old_urls = loadByPickle("%s/log/urls.old" % self.root_path)
         if not old_urls:
             old_urls = []
         self.urls_queue = Queue.Queue()

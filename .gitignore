@@ -2,3 +2,6 @@ log/*
 *.log
 page/*
 Test/page/*
+.settings
+.project
+.pydevproject
