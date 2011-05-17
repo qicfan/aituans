@@ -1,5 +1,5 @@
 #!/usr/bin/env python2.7
-#coding: utf-8
+#coding:utf-8
 '''
 Created on 2011-5-16
 
@@ -12,8 +12,6 @@ import codecs
 import os
 import re
 import time
-
-LOGGER = aituans.initLogger("parser")  
 
 
 class ParserBase(object):
@@ -52,12 +50,11 @@ class ParserBase(object):
     site = None # 站点名称
     
     def __init__(self, site):
-        global LOGGER
         if len(site) == 0:
             return
         self.meta = site
         self.meta['db'] = aituans.mongodbConnection()
-        self.logger = LOGGER
+        self.logger = aituans.initLogger("parser") 
         return
     
     def getFiles(self):
@@ -139,12 +136,15 @@ class ParserBase(object):
         得到产品的属性列表
         """
         attrs = self.__dict__
-        attrs_list = []
+        attrs_list = {}
         for key in attrs:
             if key in ['__doc__',  '__module__', 'meta', 'logger', 'handler']:
             #if key == '__doc__' or key == '__module__' or key == 'meta' or key == 'logger' or key == 'handler':
                 continue
-            attrs_list.append(key)
+            value = getattr(self, key)
+            if type(value).__name__ not in ["unicode", "str", "int", "float"]:
+                value = str(value)
+            attrs_list[key] = value
         del attrs
         del key
         return attrs_list
@@ -153,7 +153,7 @@ class ParserBase(object):
         try:
             param = self.getAttrs()
             # 判断是否存在这条记录
-            products = self.db.products
+            products = self.meta['db'].products
             cursor = products.find_one({"title": param['title']})
             if cursor == None:
                 products.insert(param)
@@ -238,7 +238,8 @@ class ParserBase(object):
         self.meta['soup'] = BeautifulSoup.BeautifulSoup(the_data)
         try:
             self.parse()
-        except:
+        except Exception, e:
+            print e
             return False
         return self.getAttrs()
     
@@ -308,7 +309,7 @@ class manzuo(ParserBase):
         return True
     
     def parseMarketPrice(self):
-        self.market_price = super(manzuo, self).parseMarketPrice().replace(u'元', '')
+        self.market_price = float(self.meta['soup'].find('table').findAll('td')[0].text.replace(u'元', ''))
         return True
     
     def parsePrice(self):
@@ -345,7 +346,7 @@ class meituan(ParserBase):
         return True
     
     def parseArea(self):
-        self.area = self.meta['soup'].find('h2', id='header-city').text.replace(self.meta['soup'].find('h2', id='header-city').em, "")
+        self.area = self.meta['soup'].find('h2', id='header-city').text.replace(self.meta['soup'].find('h2', id='header-city').em.text, "")
         return True
     
     def parseMarketPrice(self):
@@ -385,12 +386,16 @@ class nuomi(ParserBase):
     """
     糯米的解析器
     """
+    def parseMarketPrice(self):
+        self.market_price = float(self.meta['soup'].find('table').findAll('td')[0].text.replace(u'¥', ''))
+        return True
+    
     def parseArea(self):
         self.area = self.meta['soup'].find('a', attrs={'class':'switch'}).span.text
         return True
     
     def parsePrice(self):
-        self.price = float(self.meta['soup'].find('p', attrs={"class": 'cur-price '}).text.replace(u'￥', ''))
+        self.price = float(self.meta['soup'].find('p', attrs={"class": 'cur-price'}).text.replace(u'¥', ''))
         return True
     
     def parseCover(self):
@@ -415,7 +420,7 @@ class groupon(ParserBase):
         return True
     
     def parseDiscount(self):
-        self.discount = float(self.meta['soup'].find('table').findAll('td')[1].text.replace(u'折', ''))
+        self.discount = float((100 - float(self.meta['soup'].find('table').findAll('td')[1].text.replace(u'%', ''))) / 10)
         return True
     
     def parsePrice(self):
@@ -529,7 +534,7 @@ class quan24(ParserBase):
         return True
     
     def parseBuys(self):
-        self.buys = int(self.meta['soup'].find('div', attrs={'class':'deal_samebox status'}).h6.text.replace(u"已经有", "").replace(u"人购买", ""))
+        self.buys = int(self.meta['soup'].find('strong', attrs={'id':'pay_num'}).text)
         return True
     
 
@@ -538,7 +543,7 @@ class dianping(ParserBase):
     大众点评团购的解析器
     """
     def parseTitle(self):
-        self.title = self.meta['soup'].find('div', attrs={'class':'deal-title'}).replace(self.meta['soup'].find('div', attrs={'class':'deal-title'}).h1.text, "")
+        self.title = unicode(self.meta['soup'].find('div', attrs={'class':'deal-title'})).replace(self.meta['soup'].find('div', attrs={'class':'deal-title'}).h1.text, "")
         return True
     
     def parseArea(self):
@@ -570,7 +575,7 @@ class dianping(ParserBase):
         return True
     
     def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'class':'dptg-intro'}).p.span.text
+        self.company = self.meta['soup'].find('div', attrs={'class':'dptg-info'}).p.span.text
         return True
     
     def parseBuys(self):
@@ -654,11 +659,17 @@ class tuan58(ParserBase):
     def parseEndtime(self):
         pe = re.compile("var endDate = new Date\(Date.parse\('(.+?)'.replace\(/-/g,\"/\"\)\)\);")
         script = pe.findall(self.meta['soup'].findAll('script', src=None, type=None)[3].text)
-        self.endtime = time.mktime(time.strptime(script[0], "%b %d, %Y %I:%M:%S %p"))
+        try:
+            self.endtime = time.mktime(time.strptime(script[0], "%b %d, %Y %I:%M:%S %p"))
+        except:
+            self.endtime = time.mktime(time.strptime(script[0], "%Y-%m-%d %H:%M:%S"))
         return True
     
     def parseCompany(self):
-        self.company = self.meta['soup'].find('dl', attrs={'class':'class="sjdz"'}).dt.span.text.strip()
+        try:
+            self.company = self.meta['soup'].find('dl', attrs={'class':'sjdz'}).dt.span.text.strip()
+        except:
+            self.company = self.meta['soup'].find('div', attrs={'id':'sjdz'}).text.strip()
         return True
     
     def parseBuys(self):
@@ -676,11 +687,11 @@ class aibang(ParserBase):
         return True
     
     def parseMarketPrice(self):
-        self.market_price = float(self.meta['soup'].find('span', attrs={'class':'yuanjia'}).span.text.replace(u'¥', ''))
+        self.market_price = float(self.meta['soup'].find('div', attrs={'class':'t_deal_l'}).table.findAll('th')[1].text.replace(u'￥', ''))
         return True
     
     def parseDiscount(self):
-        self.discount = float(self.meta['soup'].find('span', attrs={'class':'zhekou'}).span.text.replace(u":", ""))
+        self.discount = float(self.meta['soup'].find('div', attrs={'class':'t_deal_l'}).table.findAll('th')[0].text)
         return True
     
     def parsePrice(self):
@@ -693,7 +704,8 @@ class aibang(ParserBase):
     
     def parseDesc(self):
         self.desc = self.meta['soup'].find('div', attrs={'class':'t_deal_r'})
-        self.desc = self.desc.replace(self.desc.img, "")
+        img = str(self.desc.img)
+        self.desc = str(self.desc).replace(img, "")
         return True
     
     def parseEndtime(self):
@@ -710,8 +722,8 @@ class aibang(ParserBase):
         self.buys = int(self.meta['soup'].find('div', attrs={'id':'tuanState'}).span.text)
         return True
     
-    
-#obj = aibang({}, None)
-#p = obj.testParse("http://tuan.aibang.com/beijing/gaoerfu8.html")
-#print p['endtime']
-#print time.ctime(p['endtime'])
+if __name__ == "__main__":   
+#    obj = manzuo({})
+#    p = obj.testParse("http://www.manzuo.com/deal/beijing/58781165.htm")
+#    print p
+    pass

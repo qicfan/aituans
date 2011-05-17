@@ -32,6 +32,7 @@ MONGODB_USER = "aituans"
 MONGODB_PASSWD = "qazwsxedc!@#123"
 MONGODB_CONN = None
 SITE_NEW = {}
+LOGGER = None
 
 
 def initLogger(log_file_name):
@@ -55,7 +56,7 @@ def initLogger(log_file_name):
     logger.setLevel(logging.DEBUG)
     LOGGER = (logger, handler)
     return LOGGER
-LOGGER = initLogger("spider")
+
 def deamon(logger):
     """
     1以后台进程方式启动程序
@@ -160,26 +161,44 @@ def httpGetUrlContent(url):
     使用urllib2抓取指定的URL的页面内容
     """
     global LOGGER
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows; U; Windows NT 6.1; zh-CN; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12",  "Referer": url}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows; U; Windows NT 6.1; zh-CN; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12"}
+    try:        
         req = urllib2.Request(url, None, headers)
         response = urllib2.urlopen(req)
         page_content = response.read()
         response.close()
     except Exception, e:
-        LOGGER[0].error(u"error for get %s: %s" % (url, e))
-        return False
+        # 如果出错，则每隔1秒进行一次重试，最多5次
+        LOGGER[0].error(u"error for get %s，开始总共5次的重试！" % (url))
+        count = 1
+        while 1:
+            if count > 5:
+                return False
+            try:
+                req = urllib2.Request(url, None, headers)
+                response = urllib2.urlopen(req)
+                page_content = response.read()
+                response.close()
+            except:
+                count = count + 1
+                try:
+                    response.close()
+                except:
+                    pass
+                time.sleep(1)          
+                continue
+            break
     page_content = page_content.replace("\n", "")
     page_content = page_content.replace("\r", "")
     if isinstance(page_content, unicode) == True:
         return page_content
     # 判断网页的编码类型
-    r = re.compile("content=[\"\']text/html;\ *charset=utf-8[\"\']")
-    rs = r.findall(page_content.lower())
-    if len(rs) > 0:
-        return page_content.decode("utf-8", "ignore")
-    else:
-        return page_content.decode("gbk", "ignore")
+#    r = re.compile("content=[\"\']text/html;\ *charset=utf-8[\"\']")
+#    rs = r.findall(page_content.lower())
+#    if len(rs) > 0:
+    return page_content.decode("utf-8", "ignore")
+#    else:
+#        return page_content.decode("gbk", "ignore")
 
 def findHostFromUrl(url):
     """
@@ -205,6 +224,8 @@ def findUrlFromPageContent(page_content, domain, return_all_urls = True ):
     except Exception, e:
         LOGGER[0].error(u"%s-BeautifullSoup解析错误:%s" % (domain, e))
         return False
+    finally:
+        pass
     if len(urls_list) == 0:
         LOGGER[0].warning(u"页面上没有找到任何链接")
         return False
@@ -272,7 +293,10 @@ def getSiteClass(site_name):
     global SITE_NEW
     key = hashlib.md5(site_name.encode("utf-8"))
     key.digest()
-    return SITE_NEW[key.hexdigest()]
+    key = key.hexdigest()
+    if SITE_NEW.has_key(key):
+        return SITE_NEW[key]
+    return False
 
 class Spider(threading.Thread):
     """
@@ -346,7 +370,6 @@ class Spider(threading.Thread):
                 return False
         page_file = "%s/%s" % (page_dir, encodeByMd5(url))
         if os.path.isfile(page_file):
-            self.logger[0].error(u"[%s]URL文件已经存在：%s" % (self.name, url))
             return False
         try:
             #pf = open(page_file, "w")
@@ -456,7 +479,10 @@ def updaterMain():
         # 将所有要更新的产品放入队列中
         mq = mp.Queue()
         for product in products:
-            products['class'] = getSiteClass(product['site'])
+            classs = getSiteClass(product['site'])
+            if not classs:
+                continue
+            product['class'] = classs
             mq.put(product)
         # 生成10个进程来进行更新操作
         mongodbDisconnect()
@@ -524,9 +550,15 @@ def sigintHandler(signum, frame):
             pid.terminate()
     # 自身退出
     sys.exit()
+    
+LOGGER = initLogger("spider")
+
 
 if __name__ == '__main__':
     PIDS = []
     signal.signal(signal.SIGTERM, sigintHandler)
     signal.signal(signal.SIGINT, sigintHandler)
     main()
+#    spider = aituans.Spider({"class":"test", "name":"test", "url":"http://www.groupon.cn/BeiJing/","domain":"www.groupon.cn"}, os.path.abspath(os.path.dirname(__file__)))
+#    spider.start()
+#    spider.join()
