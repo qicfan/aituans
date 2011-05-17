@@ -26,7 +26,7 @@ import signal
 
 
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
-MONGODB_HOST = "10.69.10.100"
+MONGODB_HOST = "127.0.0.1"
 MONGODB_PORT = 27277
 MONGODB_USER = "aituans"
 MONGODB_PASSWD = "qazwsxedc!@#123"
@@ -49,7 +49,7 @@ def initLogger(log_file_name):
         return False
     logfile = "%s/%s.log" % (logdir, log_file_name)
     logger = logging.getLogger(log_file_name)
-    handler = logging.FileHandler(logfile, "w", "utf-8")
+    handler = logging.FileHandler(logfile, "w")
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -57,14 +57,14 @@ def initLogger(log_file_name):
     LOGGER = (logger, handler)
     return LOGGER
 
-def deamon(logger):
+def deamon():
     """
     1以后台进程方式启动程序
     """
     global LOGGER
     if platform.platform().lower().find("windows") >= 0:
         # WINDOWS系统，直接返回
-        logger[0].info(u"不能在WINDOWS系统下以fork模式运行，会自动切换到thread模式")
+        LOGGER[0].info(u"不能在WINDOWS系统下以fork模式运行，会自动切换到thread模式")
         return False
     global ROOT_PATH
     LOGGER[0].info(u"[main]开启deamon模式")
@@ -93,7 +93,7 @@ def deamon(logger):
     # start the daemon main loop
     # 写入pid
     pidfile = open("%s/a.pid" % ROOT_PATH, "w")
-    pidfile.write(os.getpid())
+    pidfile.write(str(os.getpid()))
     pidfile.close()
     return
 
@@ -224,8 +224,6 @@ def findUrlFromPageContent(page_content, domain, return_all_urls = True ):
     except Exception, e:
         LOGGER[0].error(u"%s-BeautifullSoup解析错误:%s" % (domain, e))
         return False
-    finally:
-        pass
     if len(urls_list) == 0:
         LOGGER[0].warning(u"页面上没有找到任何链接")
         return False
@@ -528,7 +526,7 @@ def main():
     args = sys.argv[1:]
     try:
         args.index("fork" )
-        #deamon(logger)
+        deamon()
     except ValueError:
         pass
     # 执行spider

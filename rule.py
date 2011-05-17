@@ -91,8 +91,6 @@ class ParserBase(object):
         except Exception, e:
             self.logger[0].error(u"[parser]读取URL文件内容时出错: %s" % ( e))
             return False
-        finally:
-            file.close()
         return (datas[0], datas[3])
 
     def isChinese(self, uchar):
@@ -205,8 +203,7 @@ class ParserBase(object):
             col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, product_data)
         except:
             return False
-        finally:
-            aituans.mongodbDisconnect()
+        aituans.mongodbDisconnect()
         return True
     
     def parse(self, url = None):
