@@ -16,6 +16,7 @@ import platform
 import pymongo
 import Queue
 import re
+from rule import *
 import sys
 import threading
 import time
@@ -47,7 +48,7 @@ def initLogger(log_file_name):
         return False
     logfile = "%s/%s.log" % (logdir, log_file_name)
     logger = logging.getLogger(log_file_name)
-    handler = logging.FileHandler(logfile)
+    handler = logging.FileHandler(logfile, "w", "utf-8")
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -160,13 +161,13 @@ def httpGetUrlContent(url):
     """
     global LOGGER
     try:
-        headers = {"User-Agent": "aituans tuangou spider/1.0(+http://petmerry.com/test)"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows; U; Windows NT 6.1; zh-CN; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12",  "Referer": url}
         req = urllib2.Request(url, None, headers)
         response = urllib2.urlopen(req)
         page_content = response.read()
         response.close()
     except Exception, e:
-        LOGGER[0].error("error for get %s: %s" % (url, e))
+        LOGGER[0].error(u"error for get %s: %s" % (url, e))
         return False
     page_content = page_content.replace("\n", "")
     page_content = page_content.replace("\r", "")
@@ -202,7 +203,7 @@ def findUrlFromPageContent(page_content, domain, return_all_urls = True ):
         links = BeautifulSoup.SoupStrainer("a")
         urls_list = list(BeautifulSoup.BeautifulSoup(page_content, parseOnlyThese=links))
     except Exception, e:
-        LOGGER[0].error(u"BeautifullSoup解析错误:%s" % e)
+        LOGGER[0].error(u"%s-BeautifullSoup解析错误:%s" % (domain, e))
         return False
     if len(urls_list) == 0:
         LOGGER[0].warning(u"页面上没有找到任何链接")
@@ -408,7 +409,7 @@ def spiderMain():
                     continue
                 spider_instance.start()
                 spider_threads_list.append(spider_instance)
-                parser_threads_list.append(threading.Thread(target=parserMain,args=(sites[k])))
+                parser_threads_list.append(threading.Thread(target=parserMain,args=(sites[k], )))
                 del spider_instance
                 j = j + 1
                 k = k + 1
@@ -427,8 +428,7 @@ def spiderMain():
         del spider_threads_list
         del sites
         LOGGER[0].info(u"休息6个小时再抓取")
-        #time.sleep(60*60*6)
-        break
+        time.sleep(60*60*6)
     return True
 
 def parserMain(site):
@@ -440,7 +440,7 @@ def parserMain(site):
         site_handle = globals()[site['class']](site)
         site_handle.findProductFromFile();
     except Exception, e:
-        LOGGER[0].error("初始化解析器发生错误：%s" % e)
+        LOGGER[0].error(u"初始化解析器发生错误：%s" % e)
     return
 
 def updaterMain():
@@ -473,8 +473,7 @@ def updaterMain():
         del col
         del mq
         del process_list
-        break
-        #time.sleep(60*30)
+        time.sleep(60*30)
     return True
 
 def updateBuys(mq):
@@ -491,10 +490,10 @@ def updateBuys(mq):
         # 生成一个分析器实例
         site_handle = globals()[product['class']]({})
         if not site_handle.updateBuys(product):
-            logger[0].error("%s-%s团购更新失败!" % (os.getpid(), product['title']))
+            logger[0].error(u"%s-%s团购更新失败!" % (os.getpid(), product['title']))
         # 购买人数更新完毕,初始化变量，然后休息1秒继续
         time.sleep(1)
-    logger[0].info("[%s]更新完成，进程结束！" % os.getpid())
+    logger[0].info(u"[%s]更新完成，进程结束！" % os.getpid())
     logger[0].removeHandler(logger[1])
     return
 

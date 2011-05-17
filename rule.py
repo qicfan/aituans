@@ -7,7 +7,7 @@ Created on 2011-5-16
 '''
 import aituans
 import bson
-from BeautifulSoup import BeautifulSoup;
+import BeautifulSoup;
 import codecs
 import os
 import re
@@ -180,7 +180,7 @@ class ParserBase(object):
                 self.logger[0].error(u"删除网页内容文件失败:%s" % e)
                 pass
             try:
-                self.meta['soup'] = BeautifulSoup(data[1])
+                self.meta['soup'] = BeautifulSoup.BeautifulSoup(data[1])
             except Exception, e:
                 self.logger[0].error(u"BeautifulSoup解析错误:%s" % e)
                 continue
@@ -195,7 +195,7 @@ class ParserBase(object):
     
     def updateBuys(self, product_data):
         page_data = aituans.httpGetUrlContent(product_data['url'])
-        self.meta['soup'] = BeautifulSoup(page_data)
+        self.meta['soup'] = BeautifulSoup.BeautifulSoup(page_data)
         try:
             self.parseBuys()
             # 更新数据库
@@ -216,7 +216,7 @@ class ParserBase(object):
             self.parseSite()
             self.parseTitle()
             self.parseArea()
-            self.parseMarkePrice()
+            self.parseMarketPrice()
             self.parseDiscount()
             self.parsePrice()
             self.parseCover()
@@ -231,16 +231,16 @@ class ParserBase(object):
         return True
 
     def testParse(self, url):
-        the_data = self.get_page(url)
+        the_data = aituans.httpGetUrlContent(url)
         if the_data == False:
             return False
         self.meta = {"name":"test", "domain":"test.com.cn", "url":"test.com.cn/test", "area":"Beijing", "class":"testclass"}
-        self.meta['soup'] = BeautifulSoup(the_data)
+        self.meta['soup'] = BeautifulSoup.BeautifulSoup(the_data)
         try:
             self.parse()
         except:
             return False
-        return self.get_attrs()
+        return self.getAttrs()
     
     def parseAddtime(self):
         self.addtime = int(time.time())
