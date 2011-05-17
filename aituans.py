@@ -539,7 +539,7 @@ def main():
     # 启动更新器
     update_process = mp.Process(target=updaterMain, args=())
     update_process.start()
-    PIDS.append(update_process)    
+    PIDS.append(update_process)
     return
 
 def sigintHandler(signum, frame):
