@@ -5,12 +5,13 @@ Created on 2011-5-16
 
 @author: zeroq
 '''
-import sys
-import unittest
 import aituans
-import os
 import rule
-LOGGER = aituans.initLogger("spider")
+import unittest
+
+
+LOGGER = aituans.initLogger("parser")
+
 
 class ParserTest(unittest.TestCase):
     def testgetFiles(self):

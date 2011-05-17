@@ -17,11 +17,11 @@ class AituansTest(unittest.TestCase):
         spider = aituans.Spider({"class":"test", "name":"test", "url":"http://www.manzuo.com/beijing/index.htm","domain":"www.manzuo.com"}, os.path.abspath(os.path.dirname(__file__)))
         spider.start()
         spider.join()
-        #assert aituans.spider_main() == True
+        #assert aituans.spiderMain() == True
         pass
     
     def testUpdater(self):
-        assert aituans.updater() == True
+        assert aituans.updaterMain() == True
         pass
     
     def testGetSites(self):

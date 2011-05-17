@@ -9,8 +9,8 @@ import BeautifulSoup
 import codecs
 import hashlib
 import logging
+import multiprocessing as mp
 import os
-from parser import *
 import pickle
 import platform
 import pymongo
@@ -21,14 +21,16 @@ import threading
 import time
 import urllib2
 import xml.etree.ElementTree as ET
+import signal
 
 
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
-MONGODB_HOST = "127.0.0.1"
-MONGODB_PORT = 27017
+MONGODB_HOST = "10.69.10.100"
+MONGODB_PORT = 27277
 MONGODB_USER = "aituans"
 MONGODB_PASSWD = "qazwsxedc!@#123"
 MONGODB_CONN = None
+SITE_NEW = {}
 
 
 def initLogger(log_file_name):
@@ -52,7 +54,7 @@ def initLogger(log_file_name):
     logger.setLevel(logging.DEBUG)
     LOGGER = (logger, handler)
     return LOGGER
-
+LOGGER = initLogger("spider")
 def deamon(logger):
     """
     1以后台进程方式启动程序
@@ -262,6 +264,15 @@ def updateOldUrls(url):
     saveByPickle(urls_old, old_urls)
     return
 
+def getSiteClass(site_name):
+    """
+    根据站点名称，发挥站点的解析器类名称
+    """
+    global SITE_NEW
+    key = hashlib.md5(site_name.encode("utf-8"))
+    key.digest()
+    return SITE_NEW[key.hexdigest()]
+
 class Spider(threading.Thread):
     """
     对网页的抓取采用多线程方式来实现
@@ -362,21 +373,21 @@ class Spider(threading.Thread):
         self.logger[0].info(u"[%s] 抓取网页结束，成功抓取到%d个网页" % (self.name, _count))
         return
 
-def spider_main():
-    global ROOT_PATH, MONGODB_CONN, LOGGER
+def spiderMain():
     """
     1启动爬虫
     1、生成数据库连接
     2、生成爬虫对象
     3、循环执行
     """
-    
+    global ROOT_PATH, MONGODB_CONN, LOGGER, SITE_NEW
     while 1:
-#        db = mongodbConnection(logger)
-#        if db == False:
-#            logger[0].error(u"无法连接mongodb，结束进程")
-#            return False
         sites = getSites()
+        for site in sites:
+            key = hashlib.md5(site['name'].encode("utf-8"))
+            key.digest()
+            SITE_NEW[key.hexdigest()] = site['class']
+        del key
         sites_count = len(sites)
         if sites == False or sites_count == 0:
             LOGGER[0].error(u"没有读取到sites记录")
@@ -384,6 +395,7 @@ def spider_main():
         j = 0
         k = 0
         spider_threads_list = []
+        parser_threads_list = []
         while 1:
             if j < 10 and k < sites_count:    
                 try:
@@ -396,6 +408,7 @@ def spider_main():
                     continue
                 spider_instance.start()
                 spider_threads_list.append(spider_instance)
+                parser_threads_list.append(threading.Thread(target=parserMain,args=(sites[k])))
                 del spider_instance
                 j = j + 1
                 k = k + 1
@@ -407,19 +420,86 @@ def spider_main():
                 if k >= sites_count:
                     k = 0
                     break
+        for pt in parser_threads_list:
+            pt.start()
+        for pt in parser_threads_list:
+            pt.join()
         del spider_threads_list
         del sites
         LOGGER[0].info(u"休息6个小时再抓取")
-        #logger[0].removeHandler(logger[1])
-        #mongodbDisconnect()
         #time.sleep(60*60*6)
         break
     return True
 
-def updater():
+def parserMain(site):
+    """
+    启动一个分析器
+    """
+    global LOGGER
+    try:
+        site_handle = globals()[site['class']](site)
+        site_handle.findProductFromFile();
+    except Exception, e:
+        LOGGER[0].error("初始化解析器发生错误：%s" % e)
+    return
+
+def updaterMain():
+    """
+    启动更新器
+    """
+    while 1:
+        db = mongodbConnection()
+        if not db:
+            return False
+        col = db.products
+        products = col.find({"endtime":{"$gt":time.time()}})
+        # 将所有要更新的产品放入队列中
+        mq = mp.Queue()
+        for product in products:
+            products['class'] = getSiteClass(product['site'])
+            mq.put(product)
+        # 生成10个进程来进行更新操作
+        mongodbDisconnect()
+        process_list = []
+        for i in xrange(10):
+            pl = mp.Process(target=updateBuys, args=(mq,))
+            process_list.append(pl)
+            pl.start()
+        # 等待所有线程执行完成
+        for pl in process_list:
+            pl.join()
+        # 每个半个小时运行一次，初始化参数
+        del db
+        del col
+        del mq
+        del process_list
+        break
+        #time.sleep(60*30)
     return True
 
+def updateBuys(mq):
+    """
+    更新器进程的入口函数，负责调用分析器更新团购已购买人数
+    """
+    logger = initLogger("updater")
+    while True:
+        # 如果队列已经结束，则退出本次更新
+        if mq.empty():
+            break
+        # 取一个产品数据
+        product = mq.get()
+        # 生成一个分析器实例
+        site_handle = globals()[product['class']]({})
+        if not site_handle.updateBuys(product):
+            logger[0].error("%s-%s团购更新失败!" % (os.getpid(), product['title']))
+        # 购买人数更新完毕,初始化变量，然后休息1秒继续
+        time.sleep(1)
+    logger[0].info("[%s]更新完成，进程结束！" % os.getpid())
+    logger[0].removeHandler(logger[1])
+    return
+
 def main():
+    global PIDS
     args = sys.argv[1:]
     try:
         args.index("fork" )
@@ -427,11 +507,27 @@ def main():
     except ValueError:
         pass
     # 执行spider
-    spider_main()
-    # 执行updater
+    spider_process = mp.Process(target=spiderMain, args=())
+    spider_process.start()
+    PIDS.append(spider_process)
+    time.sleep(60*30)
+    # 启动更新器
+    update_process = mp.Process(target=updaterMain, args=())
+    update_process.start()
+    PIDS.append(update_process)    
     return
 
+def sigintHandler(signum, frame):
+    global PIDS
+    # 终止子进程
+    if len(PIDS) > 0:
+        for pid in PIDS:
+            pid.terminate()
+    # 自身退出
+    sys.exit()
 
 if __name__ == '__main__':
-    LOGGER = initLogger("spider")
+    PIDS = []
+    signal.signal(signal.SIGTERM, sigintHandler)
+    signal.signal(signal.SIGINT, sigintHandler)
     main()
