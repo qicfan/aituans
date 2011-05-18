@@ -17,14 +17,15 @@ import pymongo
 import Queue
 import re
 from rule import *
+import socket
 import sys
 import threading
 import time
 import urllib2
 import xml.etree.ElementTree as ET
 import signal
-
-
+   
+socket.setdefaulttimeout(10)#这里对整个socket层设置超时时间。后续文件中如果再使用到socket，不必再设置
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
 MONGODB_HOST = "127.0.0.1"
 MONGODB_PORT = 27277
@@ -169,10 +170,10 @@ def httpGetUrlContent(url):
         response.close()
     except Exception, e:
         # 如果出错，则每隔1秒进行一次重试，最多5次
-        LOGGER[0].error(u"error for get %s，开始总共5次的重试！" % (url))
+        LOGGER[0].error(u"error for get %s，开始总共3次的重试！" % (url))
         count = 1
         while 1:
-            if count > 5:
+            if count > 3:
                 return False
             try:
                 req = urllib2.Request(url, None, headers)
@@ -185,7 +186,7 @@ def httpGetUrlContent(url):
                     response.close()
                 except:
                     pass
-                time.sleep(1)          
+                time.sleep(0.5)          
                 continue
             break
     page_content = page_content.replace("\n", "")
@@ -255,8 +256,12 @@ def saveByPickle(file_name, pickle_data):
 def loadByPickle(file_name):
     if os.path.isfile(file_name):
         pickle_file = open(file_name, "r")
-        pickle_data = pickle.load(pickle_file)
-        pickle_file.close()
+        try:
+            pickle_data = pickle.load(pickle_file)
+            pickle_file.close()
+        except:
+            pickle_file.close()
+            return False        
         return pickle_data
     return False
 
@@ -383,7 +388,7 @@ class Spider(threading.Thread):
     def run(self):
         if not self.createUrlsQueen():
             self.logger[0].error(u"[%s]Failed: 无法抓取网页内容或者无法分析出网页上的URL" % self.name)
-            return False
+            return True
         _count = 0
         while 1:
             if self.urls_queue.empty():
@@ -392,8 +397,12 @@ class Spider(threading.Thread):
             if not self.savePage(url):
                 continue
             _count = _count + 1
-        self.logger[0].info(u"[%s] 抓取网页结束，成功抓取到%d个网页" % (self.name, _count))
-        return
+        self.logger[0].info(u"[%s] 抓取网页结束，成功抓取到%d个网页，初始化解析器，开始解析产品内容" % (self.name, _count))
+        th = threading.Thread(target=parserMain,args=(self.site_data, ))
+        th.start()
+        th.join()
+        self.logger[0].info(u"[%s] 解析完成" % (self.name))
+        return True
 
 def spiderMain():
     """
@@ -417,11 +426,12 @@ def spiderMain():
         j = 0
         k = 0
         spider_threads_list = []
-        parser_threads_list = []
         while 1:
-            if j < 10 and k < sites_count:    
+            if j < 10 and k < sites_count:
+                j = j + 1
+                k = k + 1
                 try:
-                    spider_instance = Spider(sites[k], ROOT_PATH)
+                    spider_instance = Spider(sites[k-1], ROOT_PATH)
                 except TypeError, e:
                     LOGGER[0].error(u"无法初始化Spider对象：%s" % e)
                     continue
@@ -430,10 +440,6 @@ def spiderMain():
                     continue
                 spider_instance.start()
                 spider_threads_list.append(spider_instance)
-                parser_threads_list.append(threading.Thread(target=parserMain,args=(sites[k], )))
-                del spider_instance
-                j = j + 1
-                k = k + 1
             else:
                 for stl in spider_threads_list:
                     stl.join()
@@ -442,10 +448,6 @@ def spiderMain():
                 if k >= sites_count:
                     k = 0
                     break
-        for pt in parser_threads_list:
-            pt.start()
-        for pt in parser_threads_list:
-            pt.join()
         del spider_threads_list
         del sites
         LOGGER[0].info(u"休息6个小时再抓取")
@@ -459,7 +461,7 @@ def parserMain(site):
     global LOGGER
     try:
         site_handle = globals()[site['class']](site)
-        site_handle.findProductFromFile();
+        site_handle.findProductFromFile()
     except Exception, e:
         LOGGER[0].error(u"初始化解析器发生错误：%s" % e)
     return
@@ -541,11 +543,16 @@ def main():
     return
 
 def sigintHandler(signum, frame):
-    global PIDS
+    global PIDS, ROOT_PATH
     # 终止子进程
     if len(PIDS) > 0:
         for pid in PIDS:
             pid.terminate()
+    # 删除PID
+    try:
+        os.unlink("%s/a.pid" % ROOT_PATH)
+    except:
+        pass
     # 自身退出
     sys.exit()
     
@@ -557,6 +564,14 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, sigintHandler)
     signal.signal(signal.SIGINT, sigintHandler)
     main()
-#    spider = aituans.Spider({"class":"test", "name":"test", "url":"http://www.groupon.cn/BeiJing/","domain":"www.groupon.cn"}, os.path.abspath(os.path.dirname(__file__)))
+#    spider = aituans.Spider({"class":"test", "name":"test", "url":"http://www.didatuan.com/beijing/teams","domain":"www.didatuan.com"}, os.path.abspath(os.path.dirname(__file__)))
 #    spider.start()
 #    spider.join()
+#    sites = getSites()
+#    parser_threads_list = []
+#    for site in sites:
+#        parser_threads_list.append(threading.Thread(target=parserMain,args=(site, )))
+#    for pt in parser_threads_list:
+#        pt.start()
+#    for pt in parser_threads_list:
+#        pt.join()

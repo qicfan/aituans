@@ -540,7 +540,7 @@ class dianping(ParserBase):
     大众点评团购的解析器
     """
     def parseTitle(self):
-        self.title = unicode(self.meta['soup'].find('div', attrs={'class':'deal-title'})).replace(self.meta['soup'].find('div', attrs={'class':'deal-title'}).h1.text, "")
+        self.title = self.meta['soup'].find('div', attrs={'class':'deal-title'}).text.replace(self.meta['soup'].find('div', attrs={'class':'deal-title'}).h1.text, "")
         return True
     
     def parseArea(self):
