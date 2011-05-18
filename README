@@ -1,0 +1,4 @@
+一个团购导航的蜘蛛和解析程序，内置了多多家主流团购网站的支持，添加网站需要在site/xxx.xml下增加配置和在rule.py中增加解析器
+程序需要mongodb数据库配合，请大家自行修改aituans.py中的mongodb配置
+开始服务直接执行python aituans.py即可，如果需要后台运行加入fork参数：python aituans.py fork即可
+程序会每隔6个小时读取site/xxx.xml中添加的网站的最新团购；每隔半个小时更新所有未结束的团购的已购买人数
