@@ -364,7 +364,14 @@ class Spider(threading.Thread):
         if page_data == "" or not page_data:
             self.logger[0].error(u"[%s]URL采集结果为空：%s" % (self.name, url))
             return False
-        page_dir = "%s/page/%s" % (self.root_path, self.site_data["domain"])
+        page_dir = "%s/page" % (self.root_path)
+        if not os.path.isdir(page_dir):
+            try:
+                os.mkdir(page_dir)
+            except:
+                self.logger[0].error(u"[%s]创建目录失败：%s" % (self.name, page_dir))
+                return False
+        page_dir = "%s/%s" % (page_dir, self.site_data["domain"])
         if not os.path.isdir(page_dir):
             try:
                 os.mkdir(page_dir)
