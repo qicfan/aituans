@@ -506,7 +506,7 @@ def updaterMain():
         del col
         del mq
         del process_list
-        time.sleep(60*30)
+        time.sleep(60*60*1)
     return True
 
 def updateBuys(mq):

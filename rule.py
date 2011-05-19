@@ -140,7 +140,7 @@ class ParserBase(object):
             #if key == '__doc__' or key == '__module__' or key == 'meta' or key == 'logger' or key == 'handler':
                 continue
             value = getattr(self, key)
-            if type(value).__name__ not in ["unicode", "str", "int", "float"]:
+            if type(value).__name__ not in ["unicode", "str", "int", "float", "list", "dict"]:
                 value = str(value)
             attrs_list[key] = value
         del attrs
@@ -523,7 +523,7 @@ class quan24(ParserBase):
         return True
     
     def parseEndtime(self):
-        self.endtime = int(self.meta['soup'].find('div', attrs={"id":"deal-timeleft"})['diff']) + time.time()
+        self.endtime = int(self.meta['soup'].find('div', attrs={"id":"deal-timeleft"})['diff'][:-3]) + time.time()
         return True
     
     def parseCompany(self):
