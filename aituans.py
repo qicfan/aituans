@@ -50,7 +50,7 @@ def initLogger(log_file_name):
         return False
     logfile = "%s/%s.log" % (logdir, log_file_name)
     logger = logging.getLogger(log_file_name)
-    handler = logging.FileHandler(logfile, "w")
+    handler = logging.FileHandler(logfile, "a")
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -418,14 +418,9 @@ def spiderMain():
     2、生成爬虫对象
     3、循环执行
     """
-    global ROOT_PATH, MONGODB_CONN, LOGGER, SITE_NEW
+    global ROOT_PATH, MONGODB_CONN, LOGGER
     while 1:
         sites = getSites()
-        for site in sites:
-            key = hashlib.md5(site['name'].encode("utf-8"))
-            key.digest()
-            SITE_NEW[key.hexdigest()] = site['class']
-        del key
         sites_count = len(sites)
         if sites == False or sites_count == 0:
             LOGGER[0].error(u"没有读取到sites记录")
@@ -477,7 +472,13 @@ def updaterMain():
     """
     启动更新器
     """
+    global SITE_NEW
     while 1:
+        sites = getSites()
+        for site in sites:
+            key = hashlib.md5(site['name'].encode("utf-8"))
+            key.digest()
+            SITE_NEW[key.hexdigest()] = site['class']
         db = mongodbConnection()
         if not db:
             return False
@@ -492,7 +493,6 @@ def updaterMain():
             product['class'] = classs
             mq.put(product)
         # 生成10个进程来进行更新操作
-        mongodbDisconnect()
         process_list = []
         for i in xrange(10):
             pl = mp.Process(target=updateBuys, args=(mq,))
@@ -506,6 +506,7 @@ def updaterMain():
         del col
         del mq
         del process_list
+        mongodbDisconnect()
         time.sleep(60*60*1)
     return True
 
@@ -571,6 +572,7 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, sigintHandler)
     signal.signal(signal.SIGINT, sigintHandler)
     main()
+#    updaterMain()
 #    spider = aituans.Spider({"class":"test", "name":"test", "url":"http://www.didatuan.com/beijing/teams","domain":"www.didatuan.com"}, os.path.abspath(os.path.dirname(__file__)))
 #    spider.start()
 #    spider.join()

@@ -152,7 +152,7 @@ class ParserBase(object):
             param = self.getAttrs()
             # 判断是否存在这条记录
             products = self.meta['db'].products
-            cursor = products.find_one({"title": param['title']})
+            cursor = products.find_one({"url": param['url']})
             if cursor == None:
                 products.insert(param)
         except Exception, e:
@@ -196,12 +196,19 @@ class ParserBase(object):
         self.meta['soup'] = BeautifulSoup.BeautifulSoup(page_data)
         try:
             self.parseBuys()
+            if self.buys == product_data['buys']:
+                return True
             # 更新数据库
-            product_data['buys'] = self.buys
             db = aituans.mongodbConnection()
             col = db.products
-            col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, product_data)
-        except:
+            col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, {"$set":{"buys": self.buys}})
+            file = open("%s/log/updator_count.log" % aituans.ROOT_PATH, "a")
+            file.write("%s %s %d %d %s\n" % (time.strftime("%Y-%m-%d- %H:%M:%S", time.localtime(time.time())), product_data["_id"], product_data["buys"], self.buys, product_data['url']))
+            file.close()
+        except Exception, e:
+            file = open("%s/log/updator_count.log" % aituans.ROOT_PATH, "a")
+            file.write("%s %s %d %s failed: %s\n" % (time.strftime("%Y-%m-%d- %H:%M:%S", time.localtime(time.time())), product_data["_id"], product_data["buys"], product_data['url'], e))
+            file.close()
             return False
         aituans.mongodbDisconnect()
         return True
