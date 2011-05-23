@@ -483,7 +483,7 @@ def updaterMain():
         if not db:
             return False
         col = db.products
-        products = col.find({"endtime":{"$gt":time.time()}})
+        products = col.find({"endtime":{"$gt":time.time()}}, {"title":1, "url":1, "site":1, "buys":1})
         # 将所有要更新的产品放入队列中
         mq = mp.Queue()
         for product in products:
