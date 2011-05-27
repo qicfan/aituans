@@ -5,28 +5,19 @@ Created on 2011-5-16
 
 @author: zeroq
 '''
-import aituans
 import bson
 import BeautifulSoup;
-import codecs
 from decimal import Decimal, getcontext
-import os
 import re
+import spider
 import time
 import sys
 
 
 class ParserBase(object):
     """
-    团购产品解析器，负责读取团购蜘蛛抓取的页面，并且解析器中的产品信息
-    操作步骤：
-        1、初始化站点信息（参数），初始化MONGODB连接，初始化日志独享
-        2、读取网页目录下的文件列表
-        3、循环列表
-            a、读取文件内容
-            b、解析出文件内容中的网页URL和网页内容
-            c、解析网页内容中的产品信息
-            d、如果成功则入库，不成功则继续循环直到列表结束（非产品页面—忽略）
+    团品解析
+    解析传入的页面内容，如果是一个团品（可以通过所有解析规则）则入库，否则不进行操作
     Attribute:
         meta 保存需要的一些元素数据
                 meta['name']  站点名称
@@ -36,7 +27,6 @@ class ParserBase(object):
         ... ...
     """
     meta = {} # 配置参数
-    logger = None # 日志对象
     title = None # 标题
     market_price = 0.00 # 市场价
     discount = 0.00 # 折扣
@@ -51,49 +41,15 @@ class ParserBase(object):
     addtime = 0 # 添加日期
     site = None # 站点名称
     
-    def __init__(self, site):
+    def __init__(self, site, url, page_content, mongodb):
         if len(site) == 0:
             return
         self.meta = site
-        self.meta['db'] = aituans.mongodbConnection()
-        self.logger = aituans.initLogger("parser") 
+        self.meta['db'] = mongodb
+        self.meta['page_content'] = page_content
+        self.meta['page_url'] = url
+        self.meta['logger'] = spider.createLogger("spider.rule")
         return
-    
-    def getFiles(self):
-        """
-        返回站点下所有采集到的网页的文件名列表
-        """
-        dir = "%s/page/%s/" % (aituans.ROOT_PATH, self.meta['domain'])
-        try:
-            files = os.listdir(dir)
-        except Exception, e:
-            self.logger[0].error("[parser]文件夹不存在，无法载入文件列表%s" % (e))
-            return False
-        file_list = []
-        for file in files:
-            file_path = "%s/page/%s/%s" % (aituans.ROOT_PATH, self.meta['domain'], file)
-            if not os.path.isfile(file_path):
-                continue
-            if file == "." or file == "..":
-                continue
-            # 生成一个文件列表
-            file_list.append(file_path)
-        return file_list
-
-    def getPageContentFromFile(self, file_name):
-        '''
-        取得文件内容，返回一个网页URL、分析器CLASS名称、SITE_NAME, 网页内容组成的字典
-        '''
-        if os.path.isfile(file_name) == False:
-            return False
-        try:
-            file = codecs.open(file_name, "r", "utf-8")
-            datas = file.readlines()
-            file.close()
-        except Exception, e:
-            self.logger[0].error(u"[parser]读取URL文件内容时出错: %s" % ( e))
-            return False
-        return (datas[0], datas[3])
 
     def isChinese(self, uchar):
         """判断一个unicode是否是汉字"""
@@ -151,90 +107,76 @@ class ParserBase(object):
         try:
             param = self.getAttrs()
             # 判断是否存在这条记录
-            products = self.meta['db'].products
+            if self.checkUrlMd5(self.meta['page_content']):
+                return False
+            products = self.meta['db'].products            
             cursor = products.find_one({"url": param['url']})
             if cursor == None:
                 products.insert(param)
-        except Exception, e:
-            self.logger[0].error(u"[parser]入库出错:%s" % e)
-            pass
+        except:
+            self.meta['logger'].exception("[parser]save error" )
         return
-
+    
+    def checkUrlMd5(self, page_content):
+        """
+        有些页面的URL可能不同，但是可能指向同一个网站，所以增加了使用MD5来验证页面内容是否一致的方法
+        """
+        url_md5_string = spider.encodeByMd5(page_content)
+        if not url_md5_string:
+            return False
+        col = self.meta['db'].urlmd5
+        rs = col.find_one({"urlmd5": url_md5_string})
+        if rs == None or not rs:
+            col.insert({"urlmd5": url_md5_string})
+            return False
+        return True
+    
     def findProductFromFile(self):
         """
         从文件内容中匹配出产品信息，如果一个文件无法匹配所有的必须规则，则说明该页面不是一个产品页面，自动忽略
         """
-        files = self.getFiles()
-        _count = 0
-        for file in files:
-            data = self.getPageContentFromFile(file)
-            if data == False:
-                continue
-            # 更新old.urls
-            aituans.updateOldUrls(data[0])
-            try:
-                os.unlink(file)
-            except Exception, e:
-                self.logger[0].error(u"删除网页内容文件失败:%s" % e)
-                pass
-            try:
-                self.meta['soup'] = BeautifulSoup.BeautifulSoup(data[1])
-            except Exception, e:
-                self.logger[0].error(u"BeautifulSoup解析错误:%s" % e)
-                continue
-            try:
-                self.parse(data[0])
-            except:
-                # 解析失败，可能不是产品页面
-                continue
-            self.save()
-            # 删除产品页面
-            _count = _count + 1
-        self.logger[0].info(u"扫描完成！共入库%d个产品" % (_count))
-        return
+        try:
+            self.meta['soup'] = BeautifulSoup.BeautifulSoup(self.meta['page_content'])
+        except:
+            self.meta['logger'].exception("BeautifulSoup init error")
+        try:
+            self.parse()
+        except:
+            # 解析失败，可能不是产品页面
+            self.meta['logger'].exception("no product's info: %s" % self.meta['page_url'].encode("utf-8"))
+            return False
+        self.save()        
+        return True
     
     def updateBuys(self, product_data):
-        page_data = aituans.httpGetUrlContent(product_data['url'])
-        self.meta['soup'] = BeautifulSoup.BeautifulSoup(page_data)
         try:
+            self.meta['soup'] = BeautifulSoup.BeautifulSoup(self.meta['page_content'])
             self.parse()
             if self.buys == product_data['buys']:
                 return True
             # 更新数据库
-            db = aituans.mongodbConnection()
-            col = db.products
+            col = self.meta['db'].products
             col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, {"$set":{"buys": self.buys}})
-            file = open("%s/log/updator_count.log" % aituans.ROOT_PATH, "a")
-            file.write("%s %s %d %d %s\n" % (time.strftime("%Y-%m-%d- %H:%M:%S", time.localtime(time.time())), product_data["_id"], product_data["buys"], self.buys, product_data['url']))
-            file.close()
-        except Exception, e:
-            file = open("%s/log/updator_count.log" % aituans.ROOT_PATH, "a")
-            file.write("%s %s %d %s failed: %s\n" % (time.strftime("%Y-%m-%d- %H:%M:%S", time.localtime(time.time())), product_data["_id"], product_data["buys"], product_data['url'], e))
-            file.close()
+        except:
+            self.meta['logger'].exception("update buyers error%s " % product_data['url'])
             return False
-        aituans.mongodbDisconnect()
         return True
     
-    def parse(self, url = None):
-        if self.parseUrl(url) and self.parseSite() and self.parseAddtime() and self.parseTitle() and self.parseTag() and self.parseBuys() \
+    def parse(self):
+        if self.parseUrl() and self.parseSite() and self.parseAddtime() and self.parseTitle() and self.parseTag() and self.parseBuys() \
         and self.parseArea() and self.parseCover() and self.parseDesc() and self.parseEndtime() and self.parseCompany():
             return True
         else:
-            if self.logger:
-                self.logger[0].error(u"[parser]分析页面内容失败: %s %s %s" % (self.meta['name'], url, e))            
+            self.meta['logger'].error("[parser]par page_content error : %s" % self.meta['page_url'])            
             raise ValueError(u"分析页面内容失败")
     
     def testParse(self, url):
-        the_data = aituans.httpGetUrlContent(url)
+        the_data = spider.httpGetUrlContent(url)
         if the_data == False:
             return False
         self.meta = {"name":"test", "domain":"test.com.cn", "url":"test.com.cn/test", "area":"Beijing", "class":"testclass"}
         self.meta['soup'] = BeautifulSoup.BeautifulSoup(the_data)
-        #try:
         self.parse(url)
-        #except Exception, e:
-        #    print e
-         #   return False
         return self.getAttrs()
     
     def parseAddtime(self):
@@ -245,10 +187,8 @@ class ParserBase(object):
         self.site = self.meta['name']
         return True
     
-    def parseUrl(self, url):
-        if url == None:
-            return False
-        self.url = url
+    def parseUrl(self):
+        self.url = self.meta['page_url']
         return True
     
     def parseTag(self):
