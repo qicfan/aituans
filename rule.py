@@ -8,10 +8,21 @@ Created on 2011-5-16
 import bson
 import BeautifulSoup;
 from decimal import Decimal, getcontext
+import os
+import pickle
+from PIL import Image
 import re
 import spider
+import StringIO
 import time
 import sys
+
+pickle_file = open("%s/city.list" % os.path.abspath(os.path.dirname(__file__)), "r")
+try:
+    CITYS = pickle.load(pickle_file)
+    pickle_file.close()
+except:
+    pickle_file.close()      
 
 
 class ParserBase(object):
@@ -41,14 +52,13 @@ class ParserBase(object):
     addtime = 0 # 添加日期
     site = None # 站点名称
     
-    def __init__(self, site, url, page_content, mongodb):
-        if len(site) == 0:
-            return
+    def __init__(self, site, url, page_content, mongodb, level = 1):
         self.meta = site
         self.meta['db'] = mongodb
         self.meta['page_content'] = page_content
         self.meta['page_url'] = url
         self.meta['logger'] = spider.createLogger("spider.rule")
+        self.meta['level'] = level
         return
 
     def isChinese(self, uchar):
@@ -105,14 +115,21 @@ class ParserBase(object):
 
     def save(self):
         try:
+            if self.meta['level'] < 2:
+                return
             param = self.getAttrs()
+            param['status'] = 1
             # 判断是否存在这条记录
             if self.checkUrlMd5(self.meta['page_content']):
                 return False
             products = self.meta['db'].products            
             cursor = products.find_one({"url": param['url']})
             if cursor == None:
-                products.insert(param)
+                cursor = products.find_one({"title": param['title']})
+                if cursor == None:
+                    products.insert(param)
+                else:
+                    products.update({"_id":bson.objectid.ObjectId(cursor['_id'])}, {"$set":{"url": self.url}})
         except:
             self.meta['logger'].exception("[parser]save error" )
         return
@@ -158,6 +175,8 @@ class ParserBase(object):
             col = self.meta['db'].products
             col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, {"$set":{"buys": self.buys}})
         except:
+            col = self.meta['db'].products
+            col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, {"$set":{"status": 0}})
             self.meta['logger'].exception("update buyers error%s " % product_data['url'])
             return False
         return True
@@ -170,13 +189,16 @@ class ParserBase(object):
             self.meta['logger'].error("[parser]par page_content error : %s" % self.meta['page_url'])            
             raise ValueError(u"分析页面内容失败")
     
-    def testParse(self, url):
-        the_data = spider.httpGetUrlContent(url)
+    def testParse(self):
+        the_data = spider.httpGetUrlContent(self.meta['page_url'])
         if the_data == False:
             return False
-        self.meta = {"name":"test", "domain":"test.com.cn", "url":"test.com.cn/test", "area":"Beijing", "class":"testclass"}
+        self.meta['name'] = "test"
+        self.meta["domain"] = "test.com.cn"
+        self.meta["area"] = "Beijing"
+        self.meta["class"] = "testclass"
         self.meta['soup'] = BeautifulSoup.BeautifulSoup(the_data)
-        self.parse(url)
+        self.parse()
         return self.getAttrs()
     
     def parseAddtime(self):
@@ -203,6 +225,8 @@ class ParserBase(object):
         body_contents = re.sub("<script(.+?)<\/script>", "", body_contents)
         body_contents = re.sub("<style(.+?)<\/style>", "", body_contents)
         body_contents = re.sub("<style(.+?)<\/style>", "", body_contents)
+        body_contents = re.sub("\<\!\-\-(.+?)\-\-\>", "", body_contents)
+        body_contents = re.sub("[\t\s]", "", body_contents)
         x = 2000
         y = 2001
         z = 0
@@ -210,36 +234,50 @@ class ParserBase(object):
         word = ""
         w = ""
         max = 50
+        start = False
         while True:
-            if x > 15000:
+            if x > 22000:
                 word = ""
                 break
             w = body_contents[x:y]
-            if w == u">" or w == u"<":
+            if w == u"<":
                 # 一个HTML标签出现，判断前面的字符串的长度
                 lw = len(word)
-                if z > 0 and lw > 0:
-                    gl = Decimal(z) / Decimal(lw)
-                    if lw > max and gl > Decimal(str(0.5)):
-                        # 如果字符串长度超过预定长度，并且中文字符出现的概率超过一半，则认为这是一个标题，退出循环
-                        break
+                if z > 35:
+                    if z > 0 and lw > 0:
+                        gl = Decimal(z) / Decimal(lw)
+                        if lw > max and gl > Decimal(str(0.5)):
+                            # 如果字符串长度超过预定长度，并且中文字符出现的概率超过一半，则认为这是一个标题，退出循环
+                            break
                 gl = 0.0
                 word = ""
                 z = 0
-            else:
+                start = False
+            elif w == u">" :
                 # 不是一个HTML标签，开始记录字符串
-                word = "%s%s" % (word, w)
-                if self.isChinese(w):
-                    z = z + 1
+                start = True
+            else:
+                if start:
+                    word = "%s%s" % (word, w)
+                    if self.isChinese(w):
+                        z = z + 1
+                else:
+                    word = ""
+                    z = 0
             x = x + 1
             y = x + 1
         if word == "":
-            raise ValueError(u"无法自动匹配标题")
+            raise ValueError("无法自动匹配标题")
             return False
+        word = re.sub("[\t\s]", "", word)
         self.title = word
-        rs = re.compile(u"\d+元")
+        rs = re.compile(u"[\d\.]+元")
+        prices = rs.findall(word)
+        if not prices or len(prices) == 0:
+            raise ValueError("无法自动匹配价格")
+            return False
         try:
-            prices = [float(p.replace(u"元", "")) for p in rs.findall(word) if True]
+            prices = [float(p.replace(u"元", "")) for p in prices if True]
             if len(prices) > 1:
                 price1 = prices[0]
                 price2 = prices[1]
@@ -263,9 +301,61 @@ class ParserBase(object):
         return True
     
     def parseArea(self):
+        """
+        1、取BODY中的前两个中文组合
+        2、判断是否存在于城市列表中
+        3、如果存在，则认为是该产品所属城市
+        """
+        body_contents = unicode(self.meta['soup'].body)
+        body_contents = re.sub("<script(.+?)<\/script>", "", body_contents)
+        body_contents = re.sub("<style(.+?)<\/style>", "", body_contents)
+        body_contents = re.sub("<style(.+?)<\/style>", "", body_contents)
+        body_contents = re.sub("\<\!\-\-(.+?)\-\-\>", "", body_contents)
+        body_contents = re.sub("<(.+?)>", "", body_contents)
+        body_contents = re.sub("[\t\s]", "", body_contents)
+        body_string = body_contents[:100]
+        del body_contents
+        x = 0
+        while True:
+            y = x + 2
+            if y > len(body_string):
+                break
+            word = body_string[x:y]
+            if word in CITYS:
+                self.area = word
+                return True
+            x = x + 1
+        self.area = u"全国"
         return True
     
     def parseCover(self):
+        """
+        1、取所有的图片地址
+        2、逐一分析图片的宽和高
+        3、取最符合比例的图片作为封面图片(高大于400，宽大于250）
+        """
+        body_imgs = self.meta['soup'].findAll("img")
+        for img in body_imgs:
+            try:
+                src = img['src']
+            except:
+                continue
+            if src.find('/') == 0:
+                src = "http://%s%s" % (spider.getDomainFromUrl(self.meta['page_url']), src)
+            elif src.find("http://") != 0:
+                src = "http://%s/%s" % (spider.getDomainFromUrl(self.meta['page_url']), src)
+            if not src or src == "" or src == None:
+                continue
+            # 取图像的宽和高
+            try:
+                im = Image.open(StringIO.StringIO(spider.httpGetUrlContent(src, True)))
+            except:
+                continue
+            w, h = im.size
+            if w > 400 and h > 250:
+                self.cover = src
+                return True
+        raise ValueError(u"无法自动匹配封面")
         return True
     
     def parseDesc(self):
@@ -273,6 +363,7 @@ class ParserBase(object):
         return True
     
     def parseEndtime(self):
+        self.endtime = time.time() + 60*60*24*2
         return True
     
     def parseCompany(self):
@@ -287,259 +378,6 @@ class ParserBase(object):
         c = str(int(self.market_price) - int(self.price))
         self.buys = int(result[0].replace(c, "").replace(u"人", ""))
         return True
-
-class manzuo(ParserBase):
-    """
-    满座的解析器
-    """
-    
-    def parseArea(self):
-        self.area = self.meta['soup'].find('div', attrs={'class':'city'}).h3.span.text
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', id="mainImgSlideShow").img['src']
-        return True
-    
-    def parseDesc(self):
-        self.desc = self.meta['soup'].find('div', attrs={'class':'con_ltmrmore'})
-        return True
-    
-    def parseEndtime(self):
-        self.endtime = int(self.meta['soup'].find('input', attrs={"id":"TimeCounter"})['value'][:-3])
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'class':'area'}).h2.text
-        return True
-
-
-class meituan(ParserBase):
-    """
-    美团网的解析器
-    """    
-    def parseArea(self):
-        self.area = self.meta['soup'].find('h2', id='header-city').text.replace(self.meta['soup'].find('h2', id='header-city').em.text, "")
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', attrs={"class":"deal-buy-cover-img"}).img['src']
-        return True
-    
-    def parseDesc(self):
-        self.desc = self.meta['soup'].find('ul', attrs={'class':'deal-detail-t cf'})
-        return True
-    
-    def parseEndtime(self):
-        self.endtime = int(self.meta['soup'].find('div', attrs={"class":"deal-box deal-timeleft deal-on"})['diff']) + int(time.time())
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'id':'side-business'}).h2.text
-        return True
-    
-
-class nuomi(ParserBase):
-    """
-    糯米的解析器
-    """    
-    def parseArea(self):
-        self.area = self.meta['soup'].find('a', attrs={'class':'switch'}).span.text
-        return True
-    
-    def parsePrice(self):
-        self.price = float(self.meta['soup'].find('p', attrs={"class": 'cur-price'}).text.replace(u'¥', ''))
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', attrs={"class":"product-pic"}).img['src']
-        return True
-    
-    def parseEndtime(self):
-        self.endtime = int(self.meta['soup'].find('div', id="countDown")['endtime'][:-3])
-        return True
-    
-
-class groupon(ParserBase):
-    """
-    团宝网的解析器
-    """
-    def parseArea(self):
-        self.area = self.meta['soup'].find('div', attrs={'class':'posi'}).span.strong.text
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('li', attrs={"class":"first"}).img['initsrc']
-        return True
-    
-    def parseEndtime(self):
-        endtime = self.meta['soup'].find('p', attrs={"class":"time"}).findAll('span')
-        hour = int(endtime[0].em.text)
-        minute = int(endtime[1].em.text)
-        second = int(endtime[2].em.text)
-        diff = int(hour*60*60 + minute * 60 + second)
-        self.endtime = int(time.time()) + diff
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('h2', attrs={'class':'c109'}).text
-        return True
-    
-
-class lashou(ParserBase):
-    """
-    拉手团的解析器
-    """
-    def parseArea(self):
-        self.area = self.meta['soup'].find('div', attrs={'class':'n_city_name'}).text
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', attrs={"class":"image"}).a.img['src']
-        return True
-    
-    def parseDesc(self):
-        self.desc = self.meta['soup'].find('ul', attrs={'class':'deal-detail-t cf'})
-        return True
-    def parseEndtime(self):
-        self.endtime = int(time.time()) + int(self.meta['soup'].find('div', attrs={"id":"sec_left"}).text)
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'class':'r company'}).h3.text
-        return True
-    
-
-class quan24(ParserBase):
-    """
-    21券的解析器
-    """
-    def parseArea(self):
-        self.area = self.meta['soup'].find('h2', attrs={'id':'header-city'})['sname']
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', attrs={"id":"team_images"}).img['src']
-        return True
-    
-    def parseDesc(self):
-        self.desc = self.meta['soup'].find('ul', attrs={'class':'deal-detail-t cf'})
-        return True
-    
-    def parseEndtime(self):
-        self.endtime = int(self.meta['soup'].find('div', attrs={"id":"deal-timeleft"})['diff'][:-3]) + time.time()
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'id':'side-business'}).h2.text
-        return True
-    
-
-class dianping(ParserBase):
-    """
-    大众点评团购的解析器
-    """
-    def parseArea(self):
-        self.area = self.meta['soup'].find('span', attrs={'class':'current'}).text
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', attrs={"class":"img-wrap"}).img['src']
-        return True
-    
-    def parseEndtime(self):
-        endtime = self.meta['soup'].find('ul', attrs={"id":"countdown"}).findAll("span")
-        day = int(endtime[0].text) * 60 * 60 * 24
-        hour = int(endtime[1].text) * 60 *60
-        minute = int(endtime[2].text) * 60
-        self.endtime = time.time() + day + hour + minute
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'class':'dptg-info'}).p.span.text
-        return True
-
-class dida(ParserBase):
-    """
-    嘀嗒团的解析器
-    """
-    def parseArea(self):
-        self.area = self.meta['soup'].find('div', attrs={'class':'city'}).h2.text
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('meta', attrs={'property':'og:image'})['content']
-        return True
-    
-    def parseDesc(self):
-        self.desc = self.meta['soup'].find('div', attrs={'class':'t_h'})
-        return True
-    
-    def parseEndtime(self):
-        self.endtime = int(self.meta['soup'].find('div', attrs={"id":"deal-timeleft"})['diff'][:-3]) + time.time()
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'id':'side-business'}).h2.text.strip()
-        return True
-    
-
-class tuan58(ParserBase):
-    """
-    58同城团购的解析器
-    """
-    def parseArea(self):
-        self.area = self.meta['soup'].find('a', attrs={'id':'changecity_more'}).text
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', attrs={'id':'product'}).img['src']
-        return True
-    
-    def parseEndtime(self):
-        pe = re.compile("var endDate = new Date\(Date.parse\('(.+?)'.replace\(/-/g,\"/\"\)\)\);")
-        script = pe.findall(self.meta['soup'].findAll('script', src=None, type=None)[3].text)
-        try:
-            self.endtime = time.mktime(time.strptime(script[0], "%b %d, %Y %I:%M:%S %p"))
-        except:
-            self.endtime = time.mktime(time.strptime(script[0], "%Y-%m-%d %H:%M:%S"))
-        return True
-    
-    def parseCompany(self):
-        try:
-            self.company = self.meta['soup'].find('dl', attrs={'class':'sjdz'}).dt.span.text.strip()
-        except:
-            self.company = self.meta['soup'].find('div', attrs={'id':'sjdz'}).text.strip()
-        return True
-    
-
-class aibang(ParserBase):
-    """
-    爱帮团购的团购规则
-    """
-    def parseArea(self):
-        self.area = self.meta['soup'].find('em', attrs={'class':'t_h_icon'}).text
-        return True
-    
-    def parseCover(self):
-        self.cover = self.meta['soup'].find('div', attrs={'class':'t_deal_r'}).img['src']
-        return True
-    
-    def parseDesc(self):
-        self.desc = self.meta['soup'].find('div', attrs={'class':'t_deal_r'})
-        img = str(self.desc.img)
-        self.desc = str(self.desc).replace(img, "")
-        return True
-    
-    def parseEndtime(self):
-        pe = re.compile("new Tools.RemainTime\(\[(\d+),(\d+),(\d+)\],(\d+)")
-        script = pe.findall(self.meta['soup'].body.text)[0]
-        self.endtime = int(script[3]) * 86400 + int(script[0]) * 3600 + int(script[1]) * 60 + int(script[2]) + time.time() - 86400
-        return True
-    
-    def parseCompany(self):
-        self.company = self.meta['soup'].find('div', attrs={'id':'e_gdfd'}).div.h2.text.strip()
-        return True
     
 
 if __name__ == "__main__":
@@ -550,9 +388,7 @@ if __name__ == "__main__":
         url = args[0]
     except ValueError:
         sys.exit()
-    obj = aibang({})
-    p = obj.testParse(url) 
+    obj = ParserBase({}, url, None, None)
+    p = obj.testParse()
     del p['tag']
-    del p['desc']
     print p
-    pass

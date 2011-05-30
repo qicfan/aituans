@@ -32,16 +32,18 @@ import platform
 import pymongo
 from rule import *
 import signal
+import socket
 import sys
 import time
 import urllib2
 import xml.etree.ElementTree as ET
 import re
 
+socket.setdefaulttimeout(10)#这里对整个socket层设置超时时间。后续文件中如果再使用到socket，不必再设置
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
 SITES = []
 SITES_DICT = {}
-MONGODB_HOST = "10.69.10.100"
+MONGODB_HOST = "127.0.0.1"
 MONGODB_PORT = 27277
 MONGODB_USER = "aituans"
 MONGODB_PASSWD = "qazwsxedc!@#123"
@@ -53,7 +55,7 @@ def getSitesFromXml():
     """
     从根目录的sites.xml中获取到要抓取的站点的信息
     """
-    global ROOT_PATH, SITES, SITES_DICT, LOGGER
+    global ROOT_PATH, SITES, SITES_DICT
     LOGGER = createLogger()
     xml_file = "%s/sites.xml" % ROOT_PATH
     if not os.path.isfile(xml_file):
@@ -88,34 +90,37 @@ def initUrlQueue():
     global SITES
     mq = mp.Queue()
     for site in SITES:
-        mq.put(site['url'])
+        mq.put((site['url'], 1))
     return mq
 
 def createLogger(log_file_name = "spider"):
     """
     返回一个指定名字的logger(logging模块的实例)
     """
-    global ROOT_PATH
+    global ROOT_PATH, LOGGER
+    if type(LOGGER).__name__ != "NoneType":
+        return LOGGER
     logdir = "%s/log" % ROOT_PATH
     try:
         if os.path.isdir(logdir) == False:
             os.mkdir(logdir)
     except:
         return False
-    logfile = "%s/%s.log" % (logdir, log_file_name)
-    logger = logging.getLogger(log_file_name)
-    handler = logging.FileHandler(logfile, "a")
+    logfile = "%s/spider.log" % (logdir)
+    LOGGER = logging.getLogger(log_file_name)
+    handler = logging.FileHandler(logfile, "w")
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    return logger
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.DEBUG)
+    return LOGGER
 
 def mongodbConnection():
     """
     返回一个验证过的mongodb的数据库 链接
     """
-    global MONGODB_HOST, MONGODB_PORT, MONGODB_USER, MONGODB_PASSWD, MONGODB_CONN, LOGGER
+    global MONGODB_HOST, MONGODB_PORT, MONGODB_USER, MONGODB_PASSWD, MONGODB_CONN
+    LOGGER = createLogger()
     # 初始化数据库连接
     try:
         MONGODB_CONN = pymongo.Connection(MONGODB_HOST, MONGODB_PORT)
@@ -139,7 +144,8 @@ def mongodbDisconnect():
     """
     关闭数据库连接
     """
-    global MONGODB_CONN, LOGGER
+    global MONGODB_CONN
+    LOGGER = createLogger()
     try:
         MONGODB_CONN.disconnect()
     except:
@@ -150,7 +156,7 @@ def getDomainFromUrl(url, root = True):
     """
     从URL中获取到根域名
     """
-    global LOGGER
+    LOGGER = createLogger()
     url_info = re.findall("http\:\/\/([\d\w\.-]*).*", url)
     if not url_info:
         LOGGER.exception("can't find domain from url: %s" % url)
@@ -165,35 +171,41 @@ def getDomainFromUrl(url, root = True):
             domain_info.pop(0)
     return ".".join(domain_info)
 
-def httpGetUrlContent(url):
+def httpGetUrlContent(url, is_image = False):
     """
     通过HTTP请求获取到指定URL的网页HTML
     """
-    global LOGGER
+    LOGGER = createLogger()
     headers = {"User-Agent": "Mozilla/5.0 (Windows; U; Windows NT 6.1; zh-CN; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12"}
     try:        
         req = urllib2.Request(url, None, headers)
-        response = urllib2.urlopen(req, None, 10)
+        response = urllib2.urlopen(req, None)
         page_content = response.read()
         response.close()
-    except urllib2.URLError:
+    except:
         LOGGER.exception("error for get %s" % (url))
         return False
-    page_content = page_content.replace("\n", "")
-    page_content = page_content.replace("\r", "")
+    if not is_image:
+        page_content = page_content.replace("\n", "")
+        page_content = page_content.replace("\r", "")
     if isinstance(page_content, unicode) == True:
+        return page_content
+    if is_image:
         return page_content
     try:
         return page_content.decode("utf-8", "ignore")
     except:
-        LOGGER.exception("use utf-8 decode page_content failed! use gbk decode")
-        return page_content.decode("gbk", "ignore")
+        try:
+            LOGGER.exception("use utf-8 decode page_content failed! use gbk decode")
+            return page_content.decode("gbk", "ignore")
+        except:
+            return False
 
 def findUrlFromPage(url, is_content = False, return_all_urls = False, domain1 = False ):
     """
     利用BeautifulSoup从页面内容中寻找特定domain开头的URL，如果没指定domain，则查找全部有效的URL
     """
-    global LOGGER
+    LOGGER = createLogger()
     if not is_content:
         page_content = httpGetUrlContent(url)
     else:
@@ -235,11 +247,11 @@ def findUrlFromPage(url, is_content = False, return_all_urls = False, domain1 = 
             urls.append(url_t['href'])
     return urls
 
-def encodeByMd5(self, page_content):
+def encodeByMd5(page_content):
     """
     得到网页内容的MD5值
     """
-    global LOGGER
+    LOGGER = createLogger()
     try:
         md5 = hashlib.md5(page_content.encode("utf-8"))
         md5.digest()
@@ -252,7 +264,8 @@ def deamon():
     """
     1以后台进程方式启动程序
     """
-    global ROOT_PATH, LOGGER
+    global ROOT_PATH
+    LOGGER = createLogger()
     if platform.platform().lower().find("windows") >= 0:
         # WINDOWS系统，直接返回
         LOGGER.info("不能在WINDOWS系统下以fork模式运行，会自动切换到thread模式")
@@ -284,7 +297,7 @@ def deamon():
     # start the daemon main loop
     # 写入pid
     pidfile = open("%s/a.pid" % ROOT_PATH, "w")
-    pidfile.write(str(os.getpid()))
+    pidfile.write(str(os.getpid()) + "\n")
     pidfile.close()
     return
 
@@ -294,7 +307,8 @@ def spiderMain():
     2、生成工作进程
     3、工作完成后休息12小时
     """
-    global SITES, SITES_DICT, LOGGER
+    global SITES, SITES_DICT, ROOT_PATH
+    LOGGER = createLogger()
     while 1:
         if not getSitesFromXml():
             sys.exit()
@@ -304,6 +318,9 @@ def spiderMain():
             p = Spider(mq)
             process_list.append(p)
             p.start()
+            pidfile = open("%s/a1.pid" % ROOT_PATH, "a")
+            pidfile.write("%d\n" % p.pid)
+            pidfile.close()
         del p
         for p in process_list:
             p.join()
@@ -315,7 +332,8 @@ def updaterMain():
     """
     1、初始化更新URL队列
     """
-    global SITES, SITES_DICT, LOGGER
+    global SITES, SITES_DICT, ROOT_PATH
+    LOGGER = createLogger()
     while 1:
         if not getSitesFromXml():
             sys.exit()
@@ -337,6 +355,9 @@ def updaterMain():
             pl = mp.Process(target=updateBuys, args=(mq,))
             process_list.append(pl)
             pl.start()
+            pidfile = open("%s/a1.pid" % ROOT_PATH, "a")
+            pidfile.write(pidfile.write("%d\n" % pl.pid))
+            pidfile.close()
         # 等待所有线程执行完成
         for pl in process_list:
             pl.join()
@@ -352,7 +373,7 @@ def updateBuys(mq):
     """
     更新器进程的入口函数，负责调用分析器更新团购已购买人数
     """
-    global LOGGER
+    LOGGER = createLogger()
     db = mongodbConnection()
     while True:
         # 如果队列已经结束，则退出本次更新
@@ -364,7 +385,7 @@ def updateBuys(mq):
         page_content = httpGetUrlContent(product['url'])
         if page_content == False:
             continue
-        site_handle = globals()[product['class']](product['siteinfo'], product['url'], page_content, db)
+        site_handle = ParserBase(product['siteinfo'], product['url'], page_content, db)
         if not site_handle.updateBuys(product):
             LOGGER.error("%s-%s-update buyers failed!" % (os.getpid(), product['title'].encode("utf-8")))
         # 购买人数更新完毕,初始化变量，然后休息1秒继续
@@ -404,9 +425,15 @@ def sigintHandler(signum, frame):
     if len(PIDS) > 0:
         for pid in PIDS:
             pid.terminate()
+    pidfile = open("%s/a1.pid" % ROOT_PATH, "r")
+    pids = pidfile.readlines()
+    pidfile.close()
+    for pid in pids:
+        os.system("kill -9 %s" % pid)
     # 删除PID
     try:
         os.unlink("%s/a.pid" % ROOT_PATH)
+        os.unlink("%s/a1.pid" % ROOT_PATH)
     except:
         pass
     # 自身退出
@@ -472,46 +499,51 @@ class Spider(mp.Process):
         """
         c = 0
         self.mongodb = mongodbConnection()
-        self.logger = createLogger("spider.main")
+        self.logger = createLogger()
         if not getSitesFromXml():
             sys.exit()
         while 1:
             if self.url_queue.empty():
                 break
             current_url = self.url_queue.get()
+            level = current_url[1]
+            current_url = current_url[0]
             domain = getDomainFromUrl(current_url)
-            domain1 = SITES_DICT[domain]['domain1']
+            try:
+                domain1 = SITES_DICT[domain]['domain1']
+            except:
+                continue
             if SITES_DICT[domain]['url'] != current_url:
                 if self.checkUrlExists(current_url):
                     self.logger.warning("%s is exists" % current_url)
                     continue
             page_content = httpGetUrlContent(current_url)
+            if not page_content:
+                continue
             if self.checkUrlMd5(page_content):
                 continue
             if page_content == False:
                 continue
-            # 解析该页面
-            try:
-                site_handle = globals()[SITES_DICT[domain]['class']](SITES_DICT[domain], current_url, page_content, self.mongodb)
-                site_handle.findProductFromFile()
-            except:
-                self.logger.exception("init parser error")
             # 分析出站内链接
             spider_urls = findUrlFromPage([current_url, page_content], True, False, domain1)
             if not spider_urls or len(spider_urls) == 0:
                 self.logger.warning("no urls in %s" % current_url)
-                continue
-            # 加入队列
-            for surl in spider_urls:
-                self.url_queue.put(surl)
-            c = c + 1
-            time.sleep(0.1)
+            else:
+                # 加入队列
+                for surl in spider_urls:
+                    self.url_queue.put((surl, level + 1))
+                c = c + 1
+            # 解析该页面
+            try:
+                site_handle = ParserBase(SITES_DICT[domain], current_url, page_content, self.mongodb, level)
+                site_handle.findProductFromFile()
+            except:
+                self.logger.exception("init parser error")
+            time.sleep(1)
         self.logger.info("worker finish %d success url" % c)
         mongodbDisconnect()
         return
-
 if __name__ == "__main__":
-    LOGGER = createLogger()
     signal.signal(signal.SIGTERM, sigintHandler)
     signal.signal(signal.SIGINT, sigintHandler)
     main()
