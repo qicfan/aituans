@@ -257,10 +257,16 @@ class ParserBase(object):
         w = ""
         max = 50
         start = False
+        second = False
         while True:
-            if x > 22000:
-                word = ""
-                break
+            if x > 22000 or x >= len(body_contents):
+                if second == True:
+                    word = ""
+                    break
+                body_contents = body_contents[25000:]
+                second = True
+                x = y = z = 0
+                continue
             w = body_contents[x:y]
             if w == u"<":
                 # 一个HTML标签出现，判断前面的字符串的长度
@@ -270,7 +276,10 @@ class ParserBase(object):
                         gl = Decimal(z) / Decimal(lw)
                         if lw > max and gl > Decimal(str(0.5)):
                             # 如果字符串长度超过预定长度，并且中文字符出现的概率超过一半，则认为这是一个标题，退出循环
-                            break
+                            rs = re.findall(u"[\d\.]+元", word)
+                            if len(rs) > 0:
+                                # 找到了价格
+                                break
                 gl = 0.0
                 word = ""
                 z = 0
@@ -293,8 +302,7 @@ class ParserBase(object):
             return False
         word = re.sub("[\t\s]", "", word)
         self.title = word
-        rs = re.compile(u"[\d\.]+元")
-        prices = rs.findall(word)
+        prices = re.findall(u"[\d\.]+元", word)
         if not prices or len(prices) == 0:
             raise ValueError("无法自动匹配价格")
             return False

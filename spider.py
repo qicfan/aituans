@@ -355,7 +355,7 @@ def updaterMain():
             process_list.append(pl)
             pl.start()
             pidfile = open("%s/a1.pid" % ROOT_PATH, "a")
-            pidfile.write(pidfile.write("%d\n" % pl.pid))
+            pidfile.write("%d\n" % pl.pid)
             pidfile.close()
         # 等待所有线程执行完成
         for pl in process_list:
@@ -386,7 +386,7 @@ def updateBuys(mq):
             continue
         site_handle = ParserBase(product['siteinfo'], product['url'], page_content, db)
         if not site_handle.updateBuys(product):
-            LOGGER.error("%s-%s-update buyers failed!" % (os.getpid(), product['title'].encode("utf-8")))
+            LOGGER.error("%s-%s-update buyers failed!" % (os.getpid(), product['url']))
         # 购买人数更新完毕,初始化变量，然后休息1秒继续
         time.sleep(1)
     LOGGER.info("[%s]updater finish!" % os.getpid())
