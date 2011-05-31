@@ -350,7 +350,6 @@ def updaterMain():
             product['siteinfo'] = SITES_DICT[domain]
             mq.put(product)
         process_list = []
-        process_list = []
         for i in xrange(10):
             pl = mp.Process(target=updateBuys, args=(mq,))
             process_list.append(pl)

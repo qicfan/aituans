@@ -152,12 +152,21 @@ class ParserBase(object):
         """
         从文件内容中匹配出产品信息，如果一个文件无法匹配所有的必须规则，则说明该页面不是一个产品页面，自动忽略
         """
+        
         try:
             self.meta['soup'] = BeautifulSoup.BeautifulSoup(self.meta['page_content'])
         except:
             self.meta['logger'].exception("BeautifulSoup init error")
         try:
-            self.parse()
+            body_text = self.meta['soup'].body.text
+            if body_text.find(u"结束时间") >= 0:
+                raise ValueError(u"该团购已经结束")            
+            if body_text.find(u"继续购买") >= 0 or body_text.find(u"团购成功") >= 0 \
+                or body_text.find(u"数量有限") >= 0 or body_text.find(u"请尽快购买") >= 0 \
+                or body_text.find(u"剩余时间") >= 0:
+                    self.parse()
+            else:
+                raise ValueError(u"该团购还未开始或者不是一个团购页面")
         except:
             # 解析失败，可能不是产品页面
             self.meta['logger'].exception("no product's info: %s" % self.meta['page_url'].encode("utf-8"))
@@ -168,11 +177,18 @@ class ParserBase(object):
     def updateBuys(self, product_data):
         try:
             self.meta['soup'] = BeautifulSoup.BeautifulSoup(self.meta['page_content'])
+            body_text = self.meta['soup'].body.text
+            if body_text.find(u"结束时间") >= 0:
+                raise ValueError(u"该团购已经结束")   
             self.parse()
             if self.buys == product_data['buys']:
                 return True
-            # 更新数据库
             col = self.meta['db'].products
+            if self.title != product_data['title']:
+                # 删除这个记录
+                col.remove({"_id":bson.objectid.ObjectId(product_data['_id'])})
+                return False
+            # 更新数据库            
             col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, {"$set":{"buys": self.buys}})
         except:
             col = self.meta['db'].products
@@ -181,7 +197,7 @@ class ParserBase(object):
             return False
         return True
     
-    def parse(self):
+    def parse(self):        
         if self.parseUrl() and self.parseSite() and self.parseAddtime() and self.parseTitle() and self.parseTag() and self.parseBuys() \
         and self.parseArea() and self.parseCover() and self.parseDesc() and self.parseEndtime() and self.parseCompany():
             return True
@@ -197,8 +213,15 @@ class ParserBase(object):
         self.meta["domain"] = "test.com.cn"
         self.meta["area"] = "Beijing"
         self.meta["class"] = "testclass"
+        self.meta['page_content'] = the_data
         self.meta['soup'] = BeautifulSoup.BeautifulSoup(the_data)
-        self.parse()
+        body_text = self.meta['soup'].body.text
+        if body_text.find(u"继续购买") >= 0 or body_text.find(u"团购成功") >= 0 \
+            or body_text.find(u"数量有限") >= 0 or body_text.find(u"请尽快购买") >= 0 \
+            or body_text.find(u"剩余时间") >= 0:
+                self.parse()
+        else:
+            raise ValueError(u"该团购还未开始或者不是一个团购页面")
         return self.getAttrs()
     
     def parseAddtime(self):
@@ -230,7 +253,6 @@ class ParserBase(object):
         x = 2000
         y = 2001
         z = 0
-        m = len(body_contents)
         word = ""
         w = ""
         max = 50
@@ -266,7 +288,7 @@ class ParserBase(object):
                     z = 0
             x = x + 1
             y = x + 1
-        if word == "":
+        if word == "" or word[-1:] == u"…" or word[-2:] == "..":
             raise ValueError("无法自动匹配标题")
             return False
         word = re.sub("[\t\s]", "", word)
