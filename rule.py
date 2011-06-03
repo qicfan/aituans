@@ -120,9 +120,9 @@ class ParserBase(object):
             param = self.getAttrs()
             param['status'] = 1
             # 判断是否存在这条记录
-            if self.checkUrlMd5(self.meta['page_content']):
+            if spider.checkUrlMd5(self.meta['page_content']):
                 return False
-            products = self.meta['db'].products            
+            products = self.meta['db'].products
             cursor = products.find_one({"url": param['url']})
             if cursor == None:
                 cursor = products.find_one({"title": param['title']})
@@ -134,20 +134,6 @@ class ParserBase(object):
             self.meta['logger'].exception("[parser]save error" )
         return
     
-    def checkUrlMd5(self, page_content):
-        """
-        有些页面的URL可能不同，但是可能指向同一个网站，所以增加了使用MD5来验证页面内容是否一致的方法
-        """
-        url_md5_string = spider.encodeByMd5(page_content)
-        if not url_md5_string:
-            return False
-        col = self.meta['db'].urlmd5
-        rs = col.find_one({"urlmd5": url_md5_string})
-        if rs == None or not rs:
-            col.insert({"urlmd5": url_md5_string})
-            return False
-        return True
-    
     def findProductFromFile(self):
         """
         从文件内容中匹配出产品信息，如果一个文件无法匹配所有的必须规则，则说明该页面不是一个产品页面，自动忽略
@@ -157,16 +143,8 @@ class ParserBase(object):
             self.meta['soup'] = BeautifulSoup.BeautifulSoup(self.meta['page_content'])
         except:
             self.meta['logger'].exception("BeautifulSoup init error")
-        try:
-            body_text = self.meta['soup'].body.text
-            if body_text.find(u"结束时间") >= 0:
-                raise ValueError(u"该团购已经结束")            
-            if body_text.find(u"继续购买") >= 0 or body_text.find(u"团购成功") >= 0 \
-                or body_text.find(u"数量有限") >= 0 or body_text.find(u"请尽快购买") >= 0 \
-                or body_text.find(u"剩余时间") >= 0:
-                    self.parse()
-            else:
-                raise ValueError(u"该团购还未开始或者不是一个团购页面")
+        try:           
+            self.parse()
         except:
             # 解析失败，可能不是产品页面
             self.meta['logger'].exception("no product's info: %s" % self.meta['page_url'].encode("utf-8"))
@@ -177,9 +155,6 @@ class ParserBase(object):
     def updateBuys(self, product_data):
         try:
             self.meta['soup'] = BeautifulSoup.BeautifulSoup(self.meta['page_content'])
-            body_text = self.meta['soup'].body.text
-            if body_text.find(u"结束时间") >= 0:
-                raise ValueError(u"该团购已经结束")   
             self.parse()
             if self.buys == product_data['buys']:
                 return True
@@ -193,11 +168,19 @@ class ParserBase(object):
         except:
             col = self.meta['db'].products
             col.update({"_id":bson.objectid.ObjectId(product_data['_id'])}, {"$set":{"status": 0}})
-            self.meta['logger'].exception("update buyers error%s " % product_data['url'])
             return False
         return True
     
-    def parse(self):        
+    def parse(self):
+        body_text = self.meta['soup'].body.text
+        if body_text.find(u"结束时间") >= 0 or body_text.find(u"团购结束") >= 0:
+            raise ValueError(u"该团购已经结束")
+        if body_text.find(u"继续购买") >= 0 or body_text.find(u"团购成功") >= 0 \
+            or body_text.find(u"数量有限") >= 0 or body_text.find(u"请尽快购买") >= 0 \
+            or body_text.find(u"剩余时间") >= 0:
+                pass
+        else:
+            raise ValueError(u"该团购还未开始或者不是一个团购页面")
         if self.parseUrl() and self.parseSite() and self.parseAddtime() and self.parseTitle() and self.parseTag() and self.parseBuys() \
         and self.parseArea() and self.parseCover() and self.parseDesc() and self.parseEndtime() and self.parseCompany():
             return True
@@ -215,13 +198,7 @@ class ParserBase(object):
         self.meta["class"] = "testclass"
         self.meta['page_content'] = the_data
         self.meta['soup'] = BeautifulSoup.BeautifulSoup(the_data)
-        body_text = self.meta['soup'].body.text
-        if body_text.find(u"继续购买") >= 0 or body_text.find(u"团购成功") >= 0 \
-            or body_text.find(u"数量有限") >= 0 or body_text.find(u"请尽快购买") >= 0 \
-            or body_text.find(u"剩余时间") >= 0:
-                self.parse()
-        else:
-            raise ValueError(u"该团购还未开始或者不是一个团购页面")
+        self.parse()
         return self.getAttrs()
     
     def parseAddtime(self):
@@ -321,7 +298,7 @@ class ParserBase(object):
                 market_price = price2
             getcontext().prec = 2
             discount = Decimal(str(price)) / Decimal(str(market_price)) * 10
-        except Exception, e:
+        except:
             price = 0.0
             market_price = 0.0
             discount = 0.0
@@ -401,7 +378,15 @@ class ParserBase(object):
         return True
     
     def parseBuys(self):
-        body_text = self.meta['soup'].body.text
+        body_text = unicode(self.meta['soup'].body)
+        body_text = re.sub(u"^折扣\:[\d\.]+$", "", body_text)
+        body_text = re.sub(u"[¥|￥][\d\.]+", "", body_text)
+        body_text = re.sub(u"^折扣<span>\:[\d\.]+<\/span>$", "", body_text)
+        body_text = re.sub("<script(.+?)<\/script>", "", body_text)
+        body_text = re.sub("<style(.+?)<\/style>", "", body_text)
+        body_text = re.sub("<style(.+?)<\/style>", "", body_text)
+        body_text = re.sub("<(.+?)>", "", body_text)
+        body_text = re.sub("[\t\s]", "", body_text)
         s = body_text.find(self.title) + len(self.title)
         rs = re.compile(u"\d+人")
         result = rs.findall(body_text[s:])

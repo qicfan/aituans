@@ -230,11 +230,11 @@ def findUrlFromPage(url, is_content = False, return_all_urls = False, domain1 = 
             continue
         if url_t['href'].find("/") == 0:
             url_t['href'] = "http://%s%s" % (domain, url_t['href'])
-        if url_t in urls:
+        if url_t['href'] in urls:
             continue
         if url_t['href'] == url:
             continue
-        if url_t['href'].find(u"#") == 0 or url_t['href'].find(u"javascript") == 0:
+        if url_t['href'].find(u"#") == 0 or url_t['href'].find(u"javascript") == 0 or url_t['href'].find(u"mailto") == 0:
             continue
         if return_all_urls == True:
             urls.append(url_t['href'])
@@ -259,6 +259,44 @@ def encodeByMd5(page_content):
     except:
         LOGGER.exception("md5 error")
     return False
+
+def checkUrlExists(url):
+    """
+    验证URL是否已经抓取过
+    """
+    db = mongodbConnection()
+    col = db.urls
+    rs = col.find_one({"url": url})
+    if rs == None or not rs:
+        col.insert({"url": url, "lasttime": int(time.time()), "count": 1})
+        mongodbDisconnect()
+        return False
+    if (time.time() - rs['lasttime']) > 60*60*24:
+        try:
+            count = rs['count'] + 1
+        except:
+            count = 1
+        col.update({"_id":bson.objectid.ObjectId(rs['_id'])}, {"$set":{"lasttime": int(time.time()), "count": count}})
+        mongodbDisconnect()
+        return False
+    mongodbDisconnect()
+    return True
+    
+def checkUrlMd5(page_content):
+    """
+    有些页面的URL可能不同，但是可能指向同一个网站，所以增加了使用MD5来验证页面内容是否一致的方法
+    """
+    url_md5_string = encodeByMd5(page_content)
+    if not url_md5_string:
+        return False
+    db = mongodbConnection()
+    col = db.urlmd5
+    rs = col.find_one({"urlmd5": url_md5_string})
+    if rs == None or not rs:
+        mongodbDisconnect()
+        return False
+    mongodbDisconnect()
+    return True
 
 def deamon():
     """
@@ -341,7 +379,7 @@ def updaterMain():
         if not db:
             return False
         col = db.products
-        products = col.find({"endtime":{"$gt":time.time()}}, {"title":1, "url":1, "site":1, "buys":1})
+        products = col.find({"status":1}, {"title":1, "url":1, "site":1, "buys":1})
         mq = mp.Queue()
         for product in products:
             domain = getDomainFromUrl(product['url'])
@@ -386,7 +424,7 @@ def updateBuys(mq):
             continue
         site_handle = ParserBase(product['siteinfo'], product['url'], page_content, db)
         if not site_handle.updateBuys(product):
-            LOGGER.error("%s-%s-update buyers failed!" % (os.getpid(), product['url']))
+            LOGGER.error("%s-%s-update buyers failed!" % (os.getpid(), product['url'].encode("UTF-8")))
         # 购买人数更新完毕,初始化变量，然后休息1秒继续
         time.sleep(1)
     LOGGER.info("[%s]updater finish!" % os.getpid())
@@ -408,7 +446,7 @@ def main():
     spider_process = mp.Process(target=spiderMain, args=())
     spider_process.start()
     PIDS.append(spider_process)
-    time.sleep(60*30)
+    time.sleep(60)
     # 启动更新器
     update_process = mp.Process(target=updaterMain, args=())
     update_process.start()
@@ -428,7 +466,10 @@ def sigintHandler(signum, frame):
     pids = pidfile.readlines()
     pidfile.close()
     for pid in pids:
-        os.system("kill -9 %s" % pid)
+        try:
+            os.system("kill -9 %s" % pid)
+        except:
+            pass
     # 删除PID
     try:
         os.unlink("%s/a.pid" % ROOT_PATH)
@@ -456,37 +497,6 @@ class Spider(mp.Process):
         self.url_queue = mq
         mp.Process.__init__(self)
     
-    def checkUrlExists(self, url):
-        """
-        验证URL是否已经抓取过
-        """
-        col = self.mongodb.urls
-        rs = col.find_one({"url": url})
-        if rs == None or not rs:
-            col.insert({"url": url, "lasttime": int(time.time()), "count": 1})
-            return False
-        if (time.time() - rs['lasttime']) > 60*60*24:
-            try:
-                count = rs['count'] + 1
-            except:
-                count = 1
-            col.update({"_id":bson.objectid.ObjectId(rs['_id'])}, {"$set":{"lasttime": int(time.time()), "count": count}})
-            return False
-        return True
-    
-    def checkUrlMd5(self, page_content):
-        """
-        有些页面的URL可能不同，但是可能指向同一个网站，所以增加了使用MD5来验证页面内容是否一致的方法
-        """
-        url_md5_string = encodeByMd5(page_content)
-        if not url_md5_string:
-            return False
-        col = self.mongodb.urlmd5
-        rs = col.find_one({"urlmd5": url_md5_string})
-        if rs == None or not rs:
-            return False
-        return True
-    
     def run(self):
         """
         1、迭代URL队列
@@ -513,13 +523,12 @@ class Spider(mp.Process):
             except:
                 continue
             if SITES_DICT[domain]['url'] != current_url:
-                if self.checkUrlExists(current_url):
-                    self.logger.warning("%s is exists" % current_url)
+                if checkUrlExists(current_url):
                     continue
             page_content = httpGetUrlContent(current_url)
             if not page_content:
                 continue
-            if self.checkUrlMd5(page_content):
+            if checkUrlMd5(page_content):
                 continue
             if page_content == False:
                 continue
